@@ -29,7 +29,6 @@ import (
 	"github.com/google/certificate-transparency-go/client"
 	"github.com/google/certificate-transparency-go/jsonclient"
 	"golang.org/x/net/context"
-	"time"
 )
 
 // Signer contains a signer that uses the standard library to
@@ -97,16 +96,7 @@ func NewSignerFromFile(caFile, caKeyFile string, policy *config.Signing) (*Signe
 	return NewSigner(priv, parsedCa, signer.DefaultSigAlgo(priv), policy)
 }
 
-func (s *Signer) sign(template *x509.Certificate, profile *config.SigningProfile, notBefore time.Time, notAfter time.Time) ([]byte, error) {
-	var distPoints= template.CRLDistributionPoints
-	if distPoints != nil && len(distPoints) > 0 {
-		template.CRLDistributionPoints = distPoints
-	}
-	err := signer.FillTemplate(template, s.policy.Default, profile, notBefore, notAfter)
-	if err != nil {
-		return nil, err
-	}
-
+func (s *Signer) sign(template *x509.Certificate) ([]byte, error) {
 	var initRoot bool
 	if s.ca == nil {
 		if !template.IsCA {
@@ -334,9 +324,18 @@ func (s *Signer) Sign(req signer.SignRequest) ([]byte, error) {
 		}
 	}
 
+	var distPoints = safeTemplate.CRLDistributionPoints
+	if distPoints != nil && len(distPoints) > 0 {
+		safeTemplate.CRLDistributionPoints = distPoints
+	}
+	err = signer.FillTemplate(&safeTemplate, s.policy.Default, profile, req.NotBefore, req.NotAfter)
+	if err != nil {
+		return nil, err
+	}
+
 	var certTBS = safeTemplate
 
-	var precertToMatch *x509.Certificate = nil
+	var precertToMatch *x509.Certificate
 	if len(req.PrecertToMatch) > 0 {
 		// Serial, NotBefore, and NotAfter must be provided in order for there
 		// be any hope for the certificate to match the precertificate. This
@@ -362,7 +361,7 @@ func (s *Signer) Sign(req signer.SignRequest) ([]byte, error) {
 		var poisonExtension = pkix.Extension{Id: signer.CTPoisonOID, Critical: true, Value: []byte{0x05, 0x00}}
 		var poisonedPreCert = certTBS
 		poisonedPreCert.ExtraExtensions = append(safeTemplate.ExtraExtensions, poisonExtension)
-		derCert, err := s.sign(&poisonedPreCert, profile, req.NotBefore, req.NotAfter)
+		derCert, err := s.sign(&poisonedPreCert)
 		if err != nil {
 			return nil, err
 		}
@@ -400,23 +399,17 @@ func (s *Signer) Sign(req signer.SignRequest) ([]byte, error) {
 		var SCTListExtension = pkix.Extension{Id: signer.SCTListOID, Critical: false, Value: serializedSCTList}
 		certTBS.ExtraExtensions = append(certTBS.ExtraExtensions, SCTListExtension)
 	}
-	signedDER, err := s.sign(&certTBS, profile, req.NotBefore, req.NotAfter)
-	if err != nil {
-		return nil, err
-	}
 
 	if precertToMatch != nil {
-		// TODO: Check that the certificate and precertificate match *before*
-		// signing the certificate.
-		err = matchCertWithPrecert(signedDER, precertToMatch)
+		err = matchCertWithPrecert(&certTBS, precertToMatch)
 		if err != nil {
-			// Destroy the mismatching certificate to the best of our ability by
-			// overwriting it with garbage. We hope rand.Read() isn't optimized
-			// away and we intentionally ignore its return value.
-			_, _ = rand.Read(signedDER)
-			signedDER = []byte{}
 			return nil, err
 		}
+	}
+
+	signedDER, err := s.sign(&certTBS)
+	if err != nil {
+		return nil, err
 	}
 
 	// Get the AKI from signedCert.  This is required to support Go 1.9+.
@@ -448,18 +441,12 @@ func (s *Signer) Sign(req signer.SignRequest) ([]byte, error) {
 	return signedCert, nil
 }
 
-// Verifies that the given certificate matches the given precertificate, assuming
-// both are signed with the same signer.
-func matchCertWithPrecert(certDER []byte, precert *x509.Certificate) error {
-	cert, err := x509.ParseCertificate(certDER)
-	if err != nil {
-		return cferr.New(cferr.CTError, cferr.CertParsingFailed)
-	}
-
+// Verifies that the given tbsCert matches the given precert.
+func matchCertWithPrecert(cert, precert *x509.Certificate) error {
 	// Check all fields match between each cert. See
 	// https://tools.ietf.org/html/rfc5280#section-4.1
 	//
-	// XXX: Assume we never put issuerUniqueID, subjectUniqueID, or any tagged field
+	// NOTE: Assume we never put issuerUniqueID, subjectUniqueID, or any tagged field
 	// other than [0] (version) and [3] (extensions) into certificates. This version
 	// check partially enforces that since new non-extension fields are more likely
 	// to be added in a new X509 version (e.g. X509v5) than to the current version
@@ -471,12 +458,12 @@ func matchCertWithPrecert(certDER []byte, precert *x509.Certificate) error {
 	if cert.Version != precert.Version {
 		return cferr.New(cferr.CTError, cferr.CTMismatchedVersion)
 	}
+	if cert.SignatureAlgorithm != precert.SignatureAlgorithm {
+		return cferr.New(cferr.CTError, cferr.CTMismatchedSignatureAlgorithm)
+	}
 	if cert.SerialNumber.Cmp(precert.SerialNumber) != 0 {
 		return cferr.New(cferr.CTError, cferr.CTMismatchedSerialNumber)
 	}
-	// XXX: The `Signature` field isn't represented in x509.Certificate. Assume that we comply
-	// with RFC 5280 and `SignatureAlgorithm` (checked below) matches `Signature`.
-
 	if !bytes.Equal(cert.RawIssuer, precert.RawIssuer) {
 		return cferr.New(cferr.CTError, cferr.CTMismatchedIssuer)
 	}
@@ -492,8 +479,6 @@ func matchCertWithPrecert(certDER []byte, precert *x509.Certificate) error {
 	if !bytes.Equal(cert.RawSubjectPublicKeyInfo, precert.RawSubjectPublicKeyInfo) {
 		return cferr.New(cferr.CTError, cferr.CTMismatchedSubjectPublicKeyInfo)
 	}
-	// Assume issuerUniqueID is not present; see comment above.
-	// Assume subjectUniqueID is not present; see comment above.
 
 	// The extensions must be the same, in the same order, except |cert| may have
 	// an SCT list extension and |precert| may have a CT poison extension.
@@ -520,12 +505,6 @@ func matchCertWithPrecert(certDER []byte, precert *x509.Certificate) error {
 			return cferr.New(cferr.CTError, cferr.CTMismatchedExtensionValue)
 		}
 	}
-
-	if cert.SignatureAlgorithm != precert.SignatureAlgorithm {
-		return cferr.New(cferr.CTError, cferr.CTMismatchedSignatureAlgorithm)
-	}
-
-	// The signatures are expected to be different, so don't compare them.
 
 	return nil
 }

@@ -429,41 +429,41 @@ func New(category Category, reason Reason) *Error {
 		case PrecertSubmissionFailed:
 			msg = "Certificate transparency precertificate submission failed"
 		case PrecertParsingFailed:
-			msg = "PrecertParsingFailed"
+			msg = "Precert parsing failed"
 		case PrecertNotAPrecert:
-			msg = "PrecertNotAPrecert"
+			msg = "Precert not a Precert"
 		case CertParsingFailed:
-			msg = "CertParsingFailed"
+			msg = "Certificate parsing failed"
 		case CertIsNotV3:
-			msg = "CertIsNotV3"
+			msg = "Cert is not X509v3"
 		case CTMismatchedVersion:
-			msg = "CTMismatchedVersion"
+			msg = "Certificate Version doesn't match precert"
 		case CTMismatchedSerialNumber:
-			msg = "CTMismatchedSerialNumber"
+			msg = "Certificate SerialNumber doesn't match precert"
 		case CTMismatchedIssuer:
-			msg = "CTMismatchedIssuer"
+			msg = "Certificate Issuer doesn't match precert"
 		case CTMismatchedNotBefore:
-			msg = "CTMismatchedNotBefore"
+			msg = "Certificate NotBefore doesn't match precert"
 		case CTMismatchedNotAfter:
-			msg = "CTMismatchedNotAfter"
+			msg = "Certificate NotAfter doesn't match precert"
 		case CTMismatchedSubject:
-			msg = "CTMismatchedSubject"
+			msg = "Certificate Subject doesn't match precert"
 		case CTMismatchedSubjectPublicKeyInfo:
-			msg = "CTMismatchedSubjectPublicKeyInfo"
+			msg = "Certificate SubjectPublicKeyInfo doesn't match precert"
 		case CTMismatchedExtensionCount:
-			msg = "CTMismatchedExtensionCount"
-		case MultiplePoisonExtensions:
-			msg = "MultiplePoisonExtensions"
-		case MultipleSCTListExtensions:
-			msg = "MultipleSCTListExtensions"
+			msg = "Certificate ExtensionCount doesn't match precert"
 		case CTMismatchedExtensionID:
-			msg = "CTMismatchedExtensionID"
+			msg = "Certificate ExtensionID doesn't match precert"
 		case CTMismatchedExtensionCritical:
-			msg = "CTMismatchedExtensionCritical"
+			msg = "Certificate ExtensionCritical doesn't match precert"
 		case CTMismatchedExtensionValue:
-			msg = "CTMismatchedExtensionValue"
+			msg = "Certificate ExtensionValue doesn't match precert"
 		case CTMismatchedSignatureAlgorithm:
-			msg = "CTMismatchedSignatureAlgorithm"
+			msg = "Certificate SignatureAlgorithm doesn't match precert"
+		case MultiplePoisonExtensions:
+			msg = "Precert contains multiple CT poison extensions"
+		case MultipleSCTListExtensions:
+			msg = "Certificate contains multiple SCTList extensions"
 		default:
 			panic(fmt.Sprintf("Unsupported CF-SSL error reason %d under category CTError.", reason))
 		}
